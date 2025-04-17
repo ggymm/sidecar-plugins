@@ -7,6 +7,8 @@ use std::fs::File;
 use std::io::{self, BufReader, Read};
 use std::sync::Arc;
 use std::thread;
+use std::env;
+use std::process;
 
 const CHUNK_SIZE: usize = 512 * 1024 * 1024;
 const CHANNEL_CAPACITY: usize = 2;
@@ -46,8 +48,13 @@ fn hash_worker<D: Digest + Send + 'static>(
 }
 
 fn main() -> io::Result<()> {
-    let file_path = "C:/Users/19679/Videos/4K/SSIS-387.mp4";
-    let file = File::open(file_path)?;
+    let args: Vec<String> = env::args().collect();
+    if args.len() != 2 {
+        eprintln!("Usage: {} <file_path>", args[0]);
+        process::exit(1);
+    }
+
+    let file = File::open(&args[1])?;
     let mut reader = BufReader::with_capacity(CHUNK_SIZE, file);
     let mut buffer = vec![0; CHUNK_SIZE];
 

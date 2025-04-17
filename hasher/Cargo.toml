@@ -10,3 +10,11 @@ sha1 = "0.10.6"
 sha2 = "0.10.8"
 digest = "0.10.7"
 crossbeam-channel = "0.5.8"
+
+
+[profile.release]
+lto = true
+strip = true
+debug = false
+panic = 'abort'
+codegen-units = 1
