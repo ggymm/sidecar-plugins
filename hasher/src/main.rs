@@ -3,12 +3,12 @@ use digest::Digest;
 use md5::Md5;
 use sha1::Sha1;
 use sha2::{Sha256, Sha512};
+use std::env;
 use std::fs::File;
 use std::io::{self, BufReader, Read};
+use std::process;
 use std::sync::Arc;
 use std::thread;
-use std::env;
-use std::process;
 
 const CHUNK_SIZE: usize = 512 * 1024 * 1024;
 const CHANNEL_CAPACITY: usize = 2;
@@ -19,6 +19,17 @@ enum HashResult {
     SHA1(Vec<u8>),
     SHA256(Vec<u8>),
     SHA512(Vec<u8>),
+}
+
+impl HashResult {
+    fn hash_order(&self) -> usize {
+        match self {
+            HashResult::MD5(_) => 0,
+            HashResult::SHA1(_) => 1,
+            HashResult::SHA256(_) => 2,
+            HashResult::SHA512(_) => 3,
+        }
+    }
 }
 
 fn hash_worker<D: Digest + Send + 'static>(
@@ -64,7 +75,6 @@ fn main() -> io::Result<()> {
     let (sha512_tx, sha512_rx) = bounded(CHANNEL_CAPACITY);
     let (result_tx, result_rx) = bounded(4);
 
-    // 启动工作线程
     let result_tx = Arc::new(result_tx);
     let threads = vec![
         thread::spawn({
@@ -107,10 +117,12 @@ fn main() -> io::Result<()> {
         thread.join().unwrap();
     }
 
+    // 收集所有结果
     let mut results = Vec::new();
     for _ in 0..4 {
         results.push(result_rx.recv().unwrap());
     }
+    results.sort_by_key(|r| r.hash_order());
 
     for result in results {
         match result {
