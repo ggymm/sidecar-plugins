@@ -117,7 +117,6 @@ fn main() -> io::Result<()> {
         thread.join().unwrap();
     }
 
-    // 收集所有结果
     let mut results = Vec::new();
     for _ in 0..4 {
         results.push(result_rx.recv().unwrap());
