@@ -21,17 +21,6 @@ enum HashResult {
     SHA512(Vec<u8>),
 }
 
-impl HashResult {
-    fn hash_order(&self) -> usize {
-        match self {
-            HashResult::MD5(_) => 0,
-            HashResult::SHA1(_) => 1,
-            HashResult::SHA256(_) => 2,
-            HashResult::SHA512(_) => 3,
-        }
-    }
-}
-
 fn hash_worker<D: Digest + Send + 'static>(
     data_rx: crossbeam_channel::Receiver<Vec<u8>>,
     result_tx: Arc<Sender<HashResult>>,
@@ -46,7 +35,7 @@ fn hash_worker<D: Digest + Send + 'static>(
         }
         hasher.update(&chunk);
     }
-
+    
     let result = hasher.finalize().to_vec();
     let hash_result = match hash_type {
         "md5" => HashResult::MD5(result),
@@ -102,7 +91,7 @@ fn main() -> io::Result<()> {
         if bytes_read == 0 {
             break;
         }
-
+        
         let chunk = buffer[..bytes_read].to_vec();
         for sender in &senders {
             sender.send(chunk.clone()).unwrap();
@@ -117,13 +106,17 @@ fn main() -> io::Result<()> {
         thread.join().unwrap();
     }
 
-    let mut results = Vec::new();
+    let mut results = [None, None, None, None];
     for _ in 0..4 {
-        results.push(result_rx.recv().unwrap());
+        match result_rx.recv().unwrap() {
+            hash @ HashResult::MD5(_) => results[0] = Some(hash),
+            hash @ HashResult::SHA1(_) => results[1] = Some(hash),
+            hash @ HashResult::SHA256(_) => results[2] = Some(hash),
+            hash @ HashResult::SHA512(_) => results[3] = Some(hash),
+        }
     }
-    results.sort_by_key(|r| r.hash_order());
 
-    for result in results {
+    for result in results.into_iter().flatten() {
         match result {
             HashResult::MD5(hash) => println!("MD5:     {}", hex::encode(hash)),
             HashResult::SHA1(hash) => println!("SHA1:    {}", hex::encode(hash)),
