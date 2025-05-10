@@ -1,6 +1,8 @@
 [package]
 name = "qrcode"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
 [dependencies]
+rqrr = "0.9.3"
+image = "0.25.6"
