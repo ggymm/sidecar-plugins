@@ -1,8 +1,15 @@
 [package]
 name = "qrcode"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
 rqrr = "0.9.3"
 image = "0.25.6"
+
+[profile.release]
+lto = true
+strip = true
+debug = false
+panic = 'abort'
+codegen-units = 1
