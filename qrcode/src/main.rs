@@ -1,6 +1,8 @@
 use std::env;
 use std::process;
 
+use rqrr::PreparedImage;
+
 fn main() {
     let args: Vec<String> = env::args().collect();
 
@@ -21,7 +23,7 @@ fn main() {
     };
 
     let img = img.to_luma8();
-    let mut img = rqrr::PreparedImage::prepare(img);
+    let mut img = PreparedImage::prepare(img);
 
     let grids = img.detect_grids();
     if grids.is_empty() {
