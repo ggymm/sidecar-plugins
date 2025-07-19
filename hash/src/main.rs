@@ -1,14 +1,15 @@
-use crossbeam_channel::{Sender, bounded};
-use digest::Digest;
-use md5::Md5;
-use sha1::Sha1;
-use sha2::{Sha256, Sha512};
 use std::env;
 use std::fs::File;
 use std::io::{self, BufReader, Read};
 use std::process;
 use std::sync::Arc;
 use std::thread;
+
+use crossbeam_channel::{Sender, bounded};
+use digest::Digest;
+use md5::Md5;
+use sha1::Sha1;
+use sha2::{Sha256, Sha512};
 
 const CHUNK_SIZE: usize = 512 * 1024 * 1024;
 const CHANNEL_CAPACITY: usize = 2;
@@ -35,7 +36,7 @@ fn hash_worker<D: Digest + Send + 'static>(
         }
         hasher.update(&chunk);
     }
-    
+
     let result = hasher.finalize().to_vec();
     let hash_result = match hash_type {
         "md5" => HashResult::MD5(result),
@@ -91,7 +92,7 @@ fn main() -> io::Result<()> {
         if bytes_read == 0 {
             break;
         }
-        
+
         let chunk = buffer[..bytes_read].to_vec();
         for sender in &senders {
             sender.send(chunk.clone()).unwrap();
