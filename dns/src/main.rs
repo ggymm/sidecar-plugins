@@ -1,59 +1,125 @@
+use std::collections::HashMap;
+use std::fmt::Debug;
 use std::fs::File;
-use std::io::{self, BufRead};
-use std::net::IpAddr;
+use std::io::{self, BufRead, BufReader};
+use std::net::{IpAddr, Ipv4Addr};
 use std::path::PathBuf;
+use std::process::Command;
 use std::time::Duration;
 
 use clap::Parser;
+use encoding_rs::GBK;
+use once_cell::sync::Lazy;
+use regex::Regex;
+use sys_locale::get_locale;
 use tokio::task::JoinSet;
 use trust_dns_resolver::TokioAsyncResolver;
-use trust_dns_resolver::config::{NameServerConfig, Protocol, ResolverConfig, ResolverOpts};
+use trust_dns_resolver::config::{LookupIpStrategy, NameServerConfig, Protocol, ResolverConfig, ResolverOpts};
+
+const LANG_ZH: &str = "zh-CN";
+const LANG_EN: &str = "en-US";
+const TIMEOUT: Duration = Duration::from_secs(3);
+
+static LANG_LOCAL: Lazy<String> = Lazy::new(|| get_locale().unwrap_or_else(|| String::from(LANG_EN)));
+
+static PING_PATTERNS: Lazy<HashMap<String, (Regex, Regex)>> = Lazy::new(|| {
+    let mut patterns = HashMap::new();
+    // English patterns
+    patterns.insert(
+        String::from(LANG_EN),
+        (
+            Regex::new(r"(\d+)% packet loss").unwrap(),
+            Regex::new(r"Minimum = (\d+)ms, Maximum = (\d+)ms, Average = (\d+)ms").unwrap(),
+        ),
+    );
+    // Chinese patterns
+    patterns.insert(
+        String::from(LANG_ZH),
+        (
+            Regex::new(r"丢失 = (\d+) \((\d+)% 丢失\)").unwrap(),
+            Regex::new(r"最短 = (\d+)ms，最长 = (\d+)ms，平均 = (\d+)ms").unwrap(),
+        ),
+    );
+    patterns
+});
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
     /// Domain name to resolve
-    #[arg(short, long)]
+    #[arg(short, long, default_value = "auto.c3pool.org")]
     domain: String,
 
     /// Path to the nameservers file (one nameserver per line)
-    #[arg(short, long)]
+    #[arg(short, long, default_value = "nameservers.txt")]
     nameservers: PathBuf,
 }
 
-async fn query_task(config: NameServerConfig, domain: &str) -> io::Result<Vec<IpAddr>> {
-    let protocol = if config.protocol == Protocol::Tcp { "TCP" } else { "UDP" };
-    let nameserver = config.socket_addr.ip();
-    println!("attempting to query domain '{}' using nameserver {} ({})", domain, nameserver, protocol);
+#[derive(Debug)]
+struct PingMetrics {
+    ip: IpAddr,
+    packet_loss: u32,
+    min_latency: u32,
+    max_latency: u32,
+    avg_latency: u32,
+}
 
-    // 构造配置
+impl PingMetrics {
+    fn new(ip: IpAddr) -> Self {
+        Self {
+            ip,
+            packet_loss: 0,
+            min_latency: 0,
+            max_latency: 0,
+            avg_latency: 0,
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+async fn ping_task(ip: IpAddr) -> io::Result<String> {
+    let timeout_ms = TIMEOUT.as_millis().max(100) as u32;
+    let output = Command::new("ping")
+        .args(["/n", "4", "/w", &timeout_ms.to_string(), &ip.to_string()])
+        .output()
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Failed to execute ping: {}", e)))?;
+
+    if LANG_LOCAL.clone() == LANG_ZH {
+        let (decoded, _, _) = GBK.decode(&output.stdout);
+        Ok(decoded.into_owned())
+    } else {
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+async fn ping_task(ip: IpAddr) -> io::Result<String> {
+    let timeout_sec = TIMEOUT.as_secs().max(1);
+    let output = Command::new("ping")
+        .args(["-c", "4", "-W", &timeout_sec.to_string(), &ip.to_string()])
+        .output()
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Failed to execute ping: {}", e)))?;
+
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+async fn query_task(domain: &str, config: NameServerConfig) -> io::Result<Vec<IpAddr>> {
     let mut opts = ResolverOpts::default();
-    opts.timeout = Duration::from_secs(3);
+    opts.timeout = TIMEOUT;
     opts.attempts = 1;
     opts.validate = false;
     opts.use_hosts_file = false;
+    opts.ip_strategy = LookupIpStrategy::Ipv4Only;
+    let mut resolver = ResolverConfig::new();
+    resolver.add_name_server(config);
 
     // 执行查询
-    let resolver = TokioAsyncResolver::tokio(
-        ResolverConfig::from_parts(None, vec![], vec![config]),
-        opts,
-    );
-
-    match resolver.lookup_ip(domain).await {
+    match TokioAsyncResolver::tokio(resolver, opts).lookup_ip(domain).await {
         Ok(response) => {
             let ips: Vec<_> = response.iter().collect();
-            if !ips.is_empty() {
-                println!("query successful for {} ({}) - found {} ip addresses:", nameserver, protocol, ips.len());
-                Ok(ips)
-            } else {
-                println!("no ip addresses found for {} ({})", nameserver, protocol);
-                Ok(vec![])
-            }
+            if !ips.is_empty() { Ok(ips) } else { Ok(vec![]) }
         }
-        Err(err) => {
-            eprintln!("query failed for {} ({}): {}", nameserver, protocol, err);
-            Ok(vec![])
-        }
+        Err(_) => Ok(vec![]),
     }
 }
 
@@ -65,27 +131,35 @@ async fn query_domain(domain: &str, nameservers: &[IpAddr]) -> io::Result<Vec<Ip
 
         // 并发查询
         tasks.spawn(async move {
+            println!(
+                "Attempting to query domain '{}' using nameserver {} (UDP)",
+                domain, nameserver
+            );
             // 使用 UDP 协议查询
             let config = NameServerConfig {
                 socket_addr: (nameserver, 53).into(),
-                protocol: Protocol::Udp, // 初始配置为UDP
+                protocol: Protocol::Udp,
                 tls_dns_name: None,
                 trust_negative_responses: true,
                 bind_addr: None,
             };
-            let udp_result = query_task(config, &domain).await;
+            let udp_result = query_task(&domain, config).await;
             match udp_result {
                 Ok(ips) if !ips.is_empty() => Ok(ips),
                 _ => {
+                    println!(
+                        "Attempting to query domain '{}' using nameserver {} (TCP)",
+                        domain, nameserver
+                    );
                     // 使用 TCP 协议查询
                     let config = NameServerConfig {
                         socket_addr: (nameserver, 53).into(),
-                        protocol: Protocol::Tcp, // 切换为TCP
+                        protocol: Protocol::Tcp,
                         tls_dns_name: None,
                         trust_negative_responses: true,
                         bind_addr: None,
                     };
-                    query_task(config, &domain).await
+                    query_task(&domain, config).await
                 }
             }
         });
@@ -94,8 +168,10 @@ async fn query_domain(domain: &str, nameservers: &[IpAddr]) -> io::Result<Vec<Ip
     // 收集结果
     while let Some(result) = tasks.join_next().await {
         if let Ok(Ok(ips)) = result {
-            // 添加新的IP（避免重复）
             for ip in ips {
+                if ip == IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)) {
+                    continue;
+                }
                 if !rets.contains(&ip) {
                     rets.push(ip);
                 }
@@ -112,23 +188,81 @@ async fn main() -> io::Result<()> {
 
     // 读取 nameservers 文件
     let file = File::open(&cli.nameservers)?;
-    let reader = io::BufReader::new(file);
-    let nameservers: Vec<IpAddr> = reader.lines().filter_map(|line| line.ok()).filter_map(|line| line.parse().ok()).collect();
+    let reader = BufReader::new(file);
+    let nameservers: Vec<IpAddr> = reader
+        .lines()
+        .filter_map(|line| line.ok())
+        .filter_map(|line| line.parse().ok())
+        .collect();
 
     if nameservers.is_empty() {
-        eprintln!("error: nameservers file is empty or has incorrect format");
+        eprintln!("Error: nameservers file is empty or has incorrect format");
         std::process::exit(1);
     }
 
-    // 执行DNS查询
+    // 根据 nameserver 查询 域名 对应的 ip 地址
     let all_ips = query_domain(&cli.domain, &nameservers).await?;
-
-    // 显示所有收集到的IP地址
     if !all_ips.is_empty() {
         println!();
-        println!("all resolved ip addresses:");
+        println!("Query domain successful");
+
+        // 执行 ping 命令检查连通性
+        println!();
+        println!("Check connection");
+        let mut tasks = JoinSet::new();
         for ip in all_ips {
-            println!("  {}", ip);
+            tasks.spawn(async move { ping_task(ip).await.map(|output| (ip, output)) });
+        }
+
+        // 收集所有 ping 结果
+        let mut results = Vec::new();
+        while let Some(result) = tasks.join_next().await {
+            match result {
+                Ok(Ok((ip, output))) => {
+                    println!("{}", output);
+
+                    // 解析结果
+                    let mut metrics = PingMetrics::new(ip);
+                    let language = LANG_LOCAL.clone();
+                    let patterns = PING_PATTERNS.get(&language).unwrap_or_else(|| {
+                        eprintln!("Error: Unsupported language: {}", language);
+                        panic!("Error: Unsupported language: {}", language)
+                    });
+
+                    if let Some(caps) = patterns.0.captures(&output) {
+                        metrics.packet_loss = if language == LANG_ZH {
+                            caps[2].parse().unwrap_or(100)
+                        } else {
+                            caps[1].parse().unwrap_or(100)
+                        };
+                    }
+                    if let Some(caps) = patterns.1.captures(&output) {
+                        metrics.min_latency = caps[1].parse().unwrap_or(0);
+                        metrics.max_latency = caps[2].parse().unwrap_or(0);
+                        metrics.avg_latency = caps[3].parse().unwrap_or(0);
+                        results.push(metrics);
+                    }
+                }
+                Ok(Err(err)) => eprintln!("Run ping command failed: {}", err),
+                Err(err) => eprintln!("Run ping command failed: {}", err),
+            }
+        }
+
+        println!();
+        println!("Display sorted results");
+        if !results.is_empty() {
+            results.sort_by(|a, b| {
+                a.packet_loss
+                    .cmp(&b.packet_loss)
+                    .then(a.avg_latency.cmp(&b.avg_latency))
+                    .then(a.max_latency.cmp(&b.max_latency))
+            });
+            for metrics in results {
+                println!(
+                    "IP: {}, Packet Loss: {}%, Avg Latency: {}ms, Max Latency: {}ms",
+                    metrics.ip, metrics.packet_loss, metrics.avg_latency, metrics.max_latency
+                );
+            }
         }
     } else {
         println!();
@@ -136,4 +270,15 @@ async fn main() -> io::Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_system_language() {
+        let locale = get_locale().unwrap_or_else(|| String::from("en-US"));
+        println!("Current locale: {}", locale);
+    }
 }
