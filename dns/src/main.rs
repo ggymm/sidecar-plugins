@@ -214,7 +214,7 @@ async fn main() -> io::Result<()> {
             tasks.spawn(async move { ping_task(ip).await.map(|output| (ip, output)) });
         }
 
-        // 收集所有 ping 结果
+        // 收集所有结果
         let mut results = Vec::new();
         while let Some(result) = tasks.join_next().await {
             match result {
@@ -248,15 +248,17 @@ async fn main() -> io::Result<()> {
             }
         }
 
-        println!();
-        println!("Display sorted results");
         if !results.is_empty() {
+            println!("Display sorted results");
             results.sort_by(|a, b| {
                 a.packet_loss
                     .cmp(&b.packet_loss)
                     .then(a.avg_latency.cmp(&b.avg_latency))
                     .then(a.max_latency.cmp(&b.max_latency))
             });
+
+            // 打印排序后的 ip 列表
+            println!();
             for metrics in results {
                 println!(
                     "IP: {}, Packet Loss: {}%, Avg Latency: {}ms, Max Latency: {}ms",
