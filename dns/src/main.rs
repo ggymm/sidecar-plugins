@@ -16,9 +16,10 @@ use tokio::task::JoinSet;
 use trust_dns_resolver::TokioAsyncResolver;
 use trust_dns_resolver::config::{LookupIpStrategy, NameServerConfig, Protocol, ResolverConfig, ResolverOpts};
 
+const TIMEOUT: Duration = Duration::from_secs(3);
+
 const LANG_ZH: &str = "zh-CN";
 const LANG_EN: &str = "en-US";
-const TIMEOUT: Duration = Duration::from_secs(3);
 
 static LANG_LOCAL: Lazy<String> = Lazy::new(|| get_locale().unwrap_or_else(|| String::from(LANG_EN)));
 
