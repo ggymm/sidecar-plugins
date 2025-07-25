@@ -18,6 +18,44 @@ use trust_dns_resolver::config::{LookupIpStrategy, NameServerConfig, Protocol, R
 
 const TIMEOUT: Duration = Duration::from_secs(3);
 
+const NAMESERVERS: &[&str] = &[
+    "1.1.1.1",
+    "1.2.4.8",
+    "1.12.12.12",
+    "4.2.2.1",
+    "8.8.8.8",
+    "8.20.247.20",
+    "8.26.56.26",
+    "9.9.9.9",
+    "45.11.45.11",
+    "52.80.52.52",
+    "64.6.64.6",
+    "74.82.42.42",
+    "77.88.8.8",
+    "80.80.80.80",
+    "84.200.69.80",
+    "94.140.14.14",
+    "100.95.0.1",
+    "101.101.101.101",
+    "101.226.4.6",
+    "114.114.114.114",
+    "117.50.10.10",
+    "119.29.29.29",
+    "156.154.70.1",
+    "168.95.1.1",
+    "168.126.63.1",
+    "180.76.76.76",
+    "180.184.1.1",
+    "182.254.118.118",
+    "185.222.222.222",
+    "195.46.39.39",
+    "199.85.126.10",
+    "202.120.2.100",
+    "208.67.222.222",
+    "210.2.4.8",
+    "223.5.5.5",
+];
+
 const LANG_ZH: &str = "zh-CN";
 const LANG_EN: &str = "en-US";
 
@@ -48,31 +86,31 @@ static PING_PATTERNS: Lazy<HashMap<String, (Regex, Regex)>> = Lazy::new(|| {
 #[command(author, version, about, long_about = None)]
 struct Cli {
     /// Domain name to resolve
-    #[arg(short, long, default_value = "auto.c3pool.org")]
+    #[arg(short, long, default_value = "google.com")]
     domain: String,
 
     /// Path to the nameservers file (one nameserver per line)
-    #[arg(short, long, default_value = "nameservers.txt")]
-    nameservers: PathBuf,
+    #[arg(short, long)]
+    nameservers: Option<PathBuf>,
 }
 
 #[derive(Debug)]
 struct PingMetrics {
     ip: IpAddr,
-    packet_loss: u32,
-    min_latency: u32,
-    max_latency: u32,
-    avg_latency: u32,
+    min: u32,
+    max: u32,
+    avg: u32,
+    loss: u32,
 }
 
 impl PingMetrics {
     fn new(ip: IpAddr) -> Self {
         Self {
             ip,
-            packet_loss: 0,
-            min_latency: 0,
-            max_latency: 0,
-            avg_latency: 0,
+            avg: 0,
+            min: 0,
+            max: 0,
+            loss: 0,
         }
     }
 }
@@ -187,17 +225,30 @@ async fn query_domain(domain: &str, nameservers: &[IpAddr]) -> io::Result<Vec<Ip
 async fn main() -> io::Result<()> {
     let cli = Cli::parse();
 
-    // 读取 nameservers 文件
-    let file = File::open(&cli.nameservers)?;
-    let reader = BufReader::new(file);
-    let nameservers: Vec<IpAddr> = reader
-        .lines()
-        .filter_map(|line| line.ok())
-        .filter_map(|line| line.parse().ok())
-        .collect();
+    // 读取 nameservers 文件，如果文件不存在或为空则使用默认列表
+    let nameservers: Vec<IpAddr> = if let Some(path) = cli.nameservers {
+        match File::open(path) {
+            Ok(file) => {
+                let reader = BufReader::new(file);
+                let nameservers: Vec<IpAddr> = reader
+                    .lines()
+                    .filter_map(|line| line.ok())
+                    .filter_map(|line| line.parse().ok())
+                    .collect();
+                if !nameservers.is_empty() {
+                    nameservers
+                } else {
+                    NAMESERVERS.iter().filter_map(|&s| s.parse().ok()).collect()
+                }
+            }
+            Err(_) => NAMESERVERS.iter().filter_map(|&s| s.parse().ok()).collect(),
+        }
+    } else {
+        NAMESERVERS.iter().filter_map(|&s| s.parse().ok()).collect()
+    };
 
     if nameservers.is_empty() {
-        eprintln!("Error: nameservers file is empty or has incorrect format");
+        eprintln!("Error: no valid nameservers found");
         std::process::exit(1);
     }
 
@@ -231,18 +282,18 @@ async fn main() -> io::Result<()> {
                     });
 
                     if let Some(caps) = patterns.0.captures(&output) {
-                        metrics.packet_loss = if language == LANG_ZH {
+                        metrics.loss = if language == LANG_ZH {
                             caps[2].parse().unwrap_or(100)
                         } else {
                             caps[1].parse().unwrap_or(100)
                         };
                     }
                     if let Some(caps) = patterns.1.captures(&output) {
-                        metrics.min_latency = caps[1].parse().unwrap_or(0);
-                        metrics.max_latency = caps[2].parse().unwrap_or(0);
-                        metrics.avg_latency = caps[3].parse().unwrap_or(0);
-                        results.push(metrics);
+                        metrics.min = caps[1].parse().unwrap_or(0);
+                        metrics.max = caps[2].parse().unwrap_or(0);
+                        metrics.avg = caps[3].parse().unwrap_or(0);
                     }
+                    results.push(metrics);
                 }
                 Ok(Err(err)) => eprintln!("Run ping command failed: {}", err),
                 Err(err) => eprintln!("Run ping command failed: {}", err),
@@ -252,18 +303,19 @@ async fn main() -> io::Result<()> {
         if !results.is_empty() {
             println!("Display sorted results");
             results.sort_by(|a, b| {
-                a.packet_loss
-                    .cmp(&b.packet_loss)
-                    .then(a.avg_latency.cmp(&b.avg_latency))
-                    .then(a.max_latency.cmp(&b.max_latency))
+                a.loss
+                    .cmp(&b.loss)
+                    .then(a.avg.cmp(&b.avg))
+                    .then(a.max.cmp(&b.max))
+                    .then(a.min.cmp(&b.min))
             });
 
             // 打印排序后的 ip 列表
             println!();
             for metrics in results {
                 println!(
-                    "IP: {}, Packet Loss: {}%, Avg Latency: {}ms, Max Latency: {}ms",
-                    metrics.ip, metrics.packet_loss, metrics.avg_latency, metrics.max_latency
+                    "IP: {}, Avg Latency: {}ms, Min Latency: {}ms, Max Latency: {}ms, Packet Loss: {}%",
+                    metrics.ip, metrics.avg, metrics.min, metrics.max, metrics.loss
                 );
             }
         }
