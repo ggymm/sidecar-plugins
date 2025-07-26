@@ -86,11 +86,10 @@ static PING_PATTERNS: Lazy<HashMap<String, (Regex, Regex)>> = Lazy::new(|| {
 #[command(author, version, about, long_about = None)]
 struct Cli {
     /// Domain name to resolve
-    #[arg(short, long, default_value = "google.com")]
     domain: String,
 
     /// Path to the nameservers file (one nameserver per line)
-    #[arg(short, long)]
+    #[arg(short = 'n', long)]
     nameservers: Option<PathBuf>,
 }
 
