@@ -1,6 +1,6 @@
 #!/bin/sh
 
-cargo clean
+#cargo clean
 cargo build --release
 
 case "$(uname)" in
