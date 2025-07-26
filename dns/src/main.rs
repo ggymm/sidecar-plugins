@@ -15,6 +15,7 @@ use sys_locale::get_locale;
 use tokio::task::JoinSet;
 use trust_dns_resolver::TokioAsyncResolver;
 use trust_dns_resolver::config::{LookupIpStrategy, NameServerConfig, Protocol, ResolverConfig, ResolverOpts};
+use url::{ParseError, Url};
 
 const TIMEOUT: Duration = Duration::from_secs(3);
 
@@ -224,6 +225,15 @@ async fn query_domain(domain: &str, nameservers: &[IpAddr]) -> io::Result<Vec<Ip
 #[tokio::main]
 async fn main() -> io::Result<()> {
     let cli = Cli::parse();
+
+    // 验证域名格式
+    if !Url::parse(&format!("https://{}", cli.domain))
+        .map(|url| url.host_str().is_some())
+        .unwrap_or(false)
+    {
+        eprintln!("Error: invalid domain name format");
+        std::process::exit(1);
+    }
 
     // 读取 nameservers 文件，如果文件不存在或为空则使用默认列表
     let nameservers: Vec<IpAddr> = if let Some(path) = cli.nameservers {
