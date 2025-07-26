@@ -13,9 +13,9 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use sys_locale::get_locale;
 use tokio::task::JoinSet;
-use trust_dns_resolver::TokioAsyncResolver;
 use trust_dns_resolver::config::{LookupIpStrategy, NameServerConfig, Protocol, ResolverConfig, ResolverOpts};
-use url::{ParseError, Url};
+use trust_dns_resolver::TokioAsyncResolver;
+use url::Url;
 
 const TIMEOUT: Duration = Duration::from_secs(3);
 
