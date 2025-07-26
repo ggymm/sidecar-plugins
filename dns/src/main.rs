@@ -155,7 +155,14 @@ async fn query_task(domain: &str, config: NameServerConfig) -> io::Result<Vec<Ip
     match TokioAsyncResolver::tokio(resolver, opts).lookup_ip(domain).await {
         Ok(response) => {
             let ips: Vec<_> = response.iter().collect();
-            if !ips.is_empty() { Ok(ips) } else { Ok(vec![]) }
+            if !ips.is_empty() {
+                for ip in &ips {
+                    println!("Found IP for domain '{}': {}", domain, ip);
+                }
+                Ok(ips)
+            } else {
+                Ok(vec![])
+            }
         }
         Err(_) => Ok(vec![]),
     }
@@ -169,10 +176,7 @@ async fn query_domain(domain: &str, nameservers: &[IpAddr]) -> io::Result<Vec<Ip
 
         // 并发查询
         tasks.spawn(async move {
-            println!(
-                "Attempting to query domain '{}' using nameserver {} (UDP)",
-                domain, nameserver
-            );
+            println!("Query domain '{}' using nameserver {} (UDP)", domain, nameserver);
             // 使用 UDP 协议查询
             let config = NameServerConfig {
                 socket_addr: (nameserver, 53).into(),
@@ -185,10 +189,7 @@ async fn query_domain(domain: &str, nameservers: &[IpAddr]) -> io::Result<Vec<Ip
             match udp_result {
                 Ok(ips) if !ips.is_empty() => Ok(ips),
                 _ => {
-                    println!(
-                        "Attempting to query domain '{}' using nameserver {} (TCP)",
-                        domain, nameserver
-                    );
+                    println!("Query domain '{}' using nameserver {} (TCP)", domain, nameserver);
                     // 使用 TCP 协议查询
                     let config = NameServerConfig {
                         socket_addr: (nameserver, 53).into(),
@@ -251,17 +252,18 @@ async fn main() -> io::Result<()> {
         std::process::exit(1);
     }
 
-    // 根据 nameserver 查询 域名 对应的 ip 地址
+    // 查询 domain 对应的 ip 地址
     let all_ips = query_domain(&cli.domain, &nameservers).await?;
+    println!();
+    println!("Query domain successful");
+
+    // 检查 ip 地址是否有效
     if !all_ips.is_empty() {
         println!();
-        println!("Query domain successful");
-
-        // 执行 ping 命令检查连通性
-        println!();
-        println!("Check connection");
+        println!("Check results");
         let mut tasks = JoinSet::new();
         for ip in all_ips {
+            // 执行 ping 命令检查
             tasks.spawn(async move { ping_task(ip).await.map(|output| (ip, output)) });
         }
 
@@ -300,7 +302,7 @@ async fn main() -> io::Result<()> {
         }
 
         if !results.is_empty() {
-            println!("Display sorted results");
+            println!("Display results（sorted）");
             results.sort_by(|a, b| {
                 a.loss
                     .cmp(&b.loss)
