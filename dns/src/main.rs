@@ -60,7 +60,17 @@ const NAMESERVERS: &[&str] = &[
 const LANG_ZH: &str = "zh-CN";
 const LANG_EN: &str = "en-US";
 
-static LANG_LOCAL: Lazy<String> = Lazy::new(|| get_locale().unwrap_or_else(|| String::from(LANG_EN)));
+static LANG_LOCAL: Lazy<String> = Lazy::new(|| {
+    let locale = get_locale().unwrap_or_else(|| String::from(LANG_EN));
+    if ["zh-CN", "zh-Hans-CN"]
+        .iter()
+        .any(|&variant| locale.starts_with(variant))
+    {
+        String::from(LANG_ZH)
+    } else {
+        String::from(LANG_EN)
+    }
+});
 
 static PING_PATTERNS: Lazy<HashMap<String, (Regex, Regex)>> = Lazy::new(|| {
     let mut patterns = HashMap::new();
