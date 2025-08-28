@@ -27,30 +27,21 @@ case "$(uname -m)" in
   ;;
 esac
 
-echo 'build dns'
-cd dns || exit
-#cargo clean
-cargo build --release
-cd ..
+apps=(
+  "dns"
+  "hash"
+  "qrcode"
+  "share"
+)
+for app in "${apps[@]}"; do
+    echo "build $app"
+    cd "$app" || exit
+    cargo build --release
+    cd ..
 
-echo 'build hash'
-cd hash || exit
-#cargo clean
-cargo build --release
-cd ..
-
-echo 'build qrcode'
-cd qrcode || exit
-#cargo clean
-cargo build --release
-cd ..
-
-if [ "$OS" = "win" ]; then
-  cp -f dns/target/release/dns.exe "dns-${OS}-${ARCH}.exe"
-  cp -f hash/target/release/hash.exe "hash-${OS}-${ARCH}.exe"
-  cp -f qrcode/target/release/qrcode.exe "qrcode-${OS}-${ARCH}.exe"
-else
-  cp -f dns/target/release/dns "dns-${OS}-${ARCH}"
-  cp -f hash/target/release/hash "hash-${OS}-${ARCH}"
-  cp -f qrcode/target/release/qrcode "qrcode-${OS}-${ARCH}"
-fi
+    if [ "$OS" = "win" ]; then
+        cp -f "$app/target/release/$app.exe" "${app}-${OS}-${ARCH}.exe"
+    else
+        cp -f "$app/target/release/$app" "${app}-${OS}-${ARCH}"
+    fi
+done

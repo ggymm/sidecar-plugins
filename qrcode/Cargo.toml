@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-rqrr = "0.9.3"
+rqrr = "0.10.0"
 image = "0.25.6"
 
 [profile.release]
