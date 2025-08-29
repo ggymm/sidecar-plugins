@@ -5,7 +5,7 @@ use axum::{
     routing::get,
     Router,
 };
-use qrcode::QrCode;
+use qrcode::{EcLevel, QrCode, Version};
 use std::env;
 use std::fs::File;
 use std::io::{Cursor, SeekFrom};
@@ -22,69 +22,9 @@ struct AppState {
     download_url: String,
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let args: Vec<String> = env::args().collect();
-    if args.len() != 2 {
-        eprintln!("Usage: {} <file_path>", args[0]);
-        std::process::exit(1);
-    }
-
-    let file_path = PathBuf::from(&args[1]);
-    if !file_path.exists() || !file_path.is_file() {
-        eprintln!("Error: '{}' is not a valid file", args[1]);
-        std::process::exit(1);
-    }
-
-    // 获取 IP 地址
-    let mut local_ip = "127.0.0.1".to_string();
-    if let Ok(socket) = UdpSocket::bind("0.0.0.0:0") {
-        if socket.connect("8.8.8.8:80").is_ok() {
-            if let Ok(addr) = socket.local_addr() {
-                local_ip = addr.ip().to_string();
-            }
-        }
-    }
-
-    // 获取随机端口号
-    let local_tcp = StdTcpListener::bind("127.0.0.1:0")?;
-    let local_port = local_tcp.local_addr()?.port();
-    drop(local_tcp);
-
-    let file_id = Uuid::new_v4().to_string();
-    let base_url = format!("http://{}:{}", local_ip, local_port);
-    println!(
-        r#"{{"pid":{},"file_id":"{}","base_url":"{}"}}"#,
-        std::process::id(),
-        file_id,
-        base_url
-    );
-
-    let app = Router::new()
-        .route("/qrcode", get(qrcode))
-        .route(&format!("/{}", file_id), get(download))
-        .with_state(Arc::new(AppState {
-            file_path,
-            download_url: format!("{}/{}", base_url, file_id),
-        }));
-
-    let listener = TcpListener::bind(format!("0.0.0.0:{}", local_port)).await?;
-    tokio::spawn(async {
-        tokio::signal::ctrl_c().await.unwrap();
-        std::process::exit(0);
-    });
-
-    axum::serve(listener, app).await?;
-    Ok(())
-}
-
 async fn qrcode(axum::extract::State(state): axum::extract::State<Arc<AppState>>) -> Result<Response, StatusCode> {
-    let code = QrCode::new(&state.download_url).unwrap();
-    let image = code
-        .render::<image::Luma<u8>>()
-        .min_dimensions(600, 600)
-        .max_dimensions(600, 600)
-        .build();
+    let code = QrCode::with_version(&state.download_url, Version::Normal(6), EcLevel::H).unwrap();
+    let image = code.render::<image::Luma<u8>>().build();
 
     let mut png_data = Vec::new();
     image::DynamicImage::ImageLuma8(image)
@@ -196,8 +136,67 @@ async fn download(
     }
 }
 
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let args: Vec<String> = env::args().collect();
+    if args.len() != 2 {
+        eprintln!("Usage: {} <file_path>", args[0]);
+        std::process::exit(1);
+    }
+
+    let file_path = PathBuf::from(&args[1]);
+    if !file_path.exists() || !file_path.is_file() {
+        eprintln!("Error: '{}' is not a valid file", args[1]);
+        std::process::exit(1);
+    }
+
+    // 获取 IP 地址
+    let mut local_ip = "127.0.0.1".to_string();
+    if let Ok(socket) = UdpSocket::bind("0.0.0.0:0") {
+        if socket.connect("8.8.8.8:80").is_ok() {
+            if let Ok(addr) = socket.local_addr() {
+                local_ip = addr.ip().to_string();
+            }
+        }
+    }
+
+    // 获取随机端口号
+    let local_tcp = StdTcpListener::bind("127.0.0.1:0")?;
+    let local_port = local_tcp.local_addr()?.port();
+    drop(local_tcp);
+
+    let file_id = Uuid::new_v4().to_string();
+    let base_url = format!("http://{}:{}", local_ip, local_port);
+    println!(
+        r#"{{"pid":{},"file_id":"{}","base_url":"{}"}}"#,
+        std::process::id(),
+        file_id,
+        base_url
+    );
+
+    let app = Router::new()
+        .route("/qrcode", get(qrcode))
+        .route(&format!("/{}", file_id), get(download))
+        .with_state(Arc::new(AppState {
+            file_path,
+            download_url: format!("{}/{}", base_url, file_id),
+        }));
+
+    let listener = TcpListener::bind(format!("0.0.0.0:{}", local_port)).await?;
+    tokio::spawn(async {
+        tokio::signal::ctrl_c().await.unwrap();
+        std::process::exit(0);
+    });
+
+    axum::serve(listener, app).await?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
+    use qrcode::{EcLevel, QrCode, Version};
+    use std::fs;
+    use std::io::Cursor;
     use std::net::UdpSocket;
 
     #[test]
@@ -206,5 +205,26 @@ mod tests {
         socket.connect("8.8.8.8:80").unwrap();
         let local_addr = socket.local_addr().unwrap();
         println!("local_addr: {}", local_addr);
+    }
+
+    #[test]
+    fn test_qrcode() {
+        let code = QrCode::with_version(
+            "https://example.com/download/test-file.zip",
+            Version::Normal(6),
+            EcLevel::H,
+        )
+        .unwrap();
+
+        // 生成图像查看实际尺寸
+        let qr_image = code.render::<image::Luma<u8>>().build();
+
+        // 保存测试图片
+        let mut png_data = Vec::new();
+        image::DynamicImage::ImageLuma8(qr_image)
+            .write_to(&mut Cursor::new(&mut png_data), image::ImageFormat::Png)
+            .unwrap();
+
+        fs::write("test_qrcode.png", &png_data).unwrap();
     }
 }

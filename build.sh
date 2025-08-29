@@ -36,7 +36,7 @@ apps=(
 for app in "${apps[@]}"; do
     echo "build $app"
     cd "$app" || exit
-    cargo clean
+    # cargo clean
     cargo build --release
     cd ..
 
