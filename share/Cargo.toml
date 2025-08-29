@@ -4,15 +4,15 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-axum = "0.8.4"
+axum = "0.8"
 mime_guess = "2.0"
 
 [dependencies.image]
-version = "0.25.6"
+version = "0.25"
 features = ["png"]
 
 [dependencies.qrcode]
-version = "0.14.1"
+version = "0.14"
 features = ["image"]
 
 [dependencies.tokio]
