@@ -107,6 +107,10 @@ async fn download(
     headers: HeaderMap,
 ) -> Result<Response, StatusCode> {
     let file_path = &state.file_path;
+    let file_name = file_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("download");
     let file_read = File::open(file_path).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let file_size = file_read
         .metadata()
@@ -166,6 +170,10 @@ async fn download(
                 (header::CONTENT_RANGE, &format!("bytes {}-{}/{}", start, end, file_size)),
                 (header::CONTENT_LENGTH, &len.to_string()),
                 (header::CONTENT_TYPE, &content_type),
+                (
+                    header::CONTENT_DISPOSITION,
+                    &format!("attachment; filename=\"{}\"", file_name),
+                ),
             ],
             Body::from_stream(stream),
         )
@@ -177,6 +185,10 @@ async fn download(
                 (header::ACCEPT_RANGES, "bytes"),
                 (header::CONTENT_LENGTH, &len.to_string()),
                 (header::CONTENT_TYPE, &content_type),
+                (
+                    header::CONTENT_DISPOSITION,
+                    &format!("attachment; filename=\"{}\"", file_name),
+                ),
             ],
             Body::from_stream(stream),
         )
