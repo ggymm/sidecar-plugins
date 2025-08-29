@@ -8,7 +8,7 @@ use qrcode::QrCode;
 use std::env;
 use std::fs::File;
 use std::io::{Cursor, Read, Seek, SeekFrom};
-use std::net::{IpAddr, TcpListener as StdTcpListener};
+use std::net::{TcpListener as StdTcpListener, UdpSocket};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::net::TcpListener;
@@ -33,23 +33,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         std::process::exit(1);
     }
 
+    // 获取 IP 地址
     let mut local_ip = "127.0.0.1".to_string();
-    for interface in if_addrs::get_if_addrs()? {
-        if !interface.is_loopback() {
-            match interface.ip() {
-                IpAddr::V4(ipv4) => {
-                    if !ipv4.is_loopback() && !ipv4.is_multicast() && !ipv4.is_link_local() {
-                        local_ip = ipv4.to_string()
-                    }
-                }
-                IpAddr::V6(_) => continue,
+    if let Ok(socket) = UdpSocket::bind("0.0.0.0:0") {
+        if socket.connect("8.8.8.8:80").is_ok() {
+            if let Ok(addr) = socket.local_addr() {
+                local_ip = addr.ip().to_string();
             }
         }
     }
 
-    let local_bind = StdTcpListener::bind("127.0.0.1:0")?;
-    let local_port = local_bind.local_addr()?.port();
-    drop(local_bind);
+    // 获取随机端口号
+    let local_tcp = StdTcpListener::bind("127.0.0.1:0")?;
+    let local_port = local_tcp.local_addr()?.port();
+    drop(local_tcp);
 
     let file_id = Uuid::new_v4().to_string();
     let base_url = format!("http://{}:{}", local_ip, local_port);
@@ -179,5 +176,18 @@ async fn download(
             buffer,
         )
             .into_response())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::UdpSocket;
+
+    #[test]
+    fn test_local_ip() {
+        let socket = UdpSocket::bind("0.0.0.0:0").unwrap();
+        socket.connect("8.8.8.8:80").unwrap();
+        let local_addr = socket.local_addr().unwrap();
+        println!("local_addr: {}", local_addr);
     }
 }
