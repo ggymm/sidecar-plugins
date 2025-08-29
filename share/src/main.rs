@@ -5,7 +5,7 @@ use axum::{
     routing::get,
     Router,
 };
-use qrcode::{EcLevel, QrCode, Version};
+use qrcode::{EcLevel, QrCode};
 use std::env;
 use std::fs::File;
 use std::io::{Cursor, SeekFrom};
@@ -23,7 +23,7 @@ struct AppState {
 }
 
 async fn qrcode(axum::extract::State(state): axum::extract::State<Arc<AppState>>) -> Result<Response, StatusCode> {
-    let code = QrCode::with_version(&state.download_url, Version::Normal(6), EcLevel::H).unwrap();
+    let code = QrCode::with_error_correction_level(&state.download_url, EcLevel::H).unwrap();
     let image = code.render::<image::Luma<u8>>().build();
 
     let mut png_data = Vec::new();
@@ -194,7 +194,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
 #[cfg(test)]
 mod tests {
-    use qrcode::{EcLevel, QrCode, Version};
+    use qrcode::{EcLevel, QrCode};
     use std::fs;
     use std::io::Cursor;
     use std::net::UdpSocket;
@@ -209,9 +209,8 @@ mod tests {
 
     #[test]
     fn test_qrcode() {
-        let code = QrCode::with_version(
-            "https://example.com/download/test-file.zip",
-            Version::Normal(6),
+        let code = QrCode::with_error_correction_level(
+            "http://192.168.1.55:55940/863d6cfb-ceeb-433d-b11f-ed9d12af72e5",
             EcLevel::H,
         )
         .unwrap();
