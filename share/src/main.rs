@@ -1,4 +1,5 @@
 use axum::{
+    body::Body,
     http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::get,
@@ -7,11 +8,13 @@ use axum::{
 use qrcode::QrCode;
 use std::env;
 use std::fs::File;
-use std::io::{Cursor, Read, Seek, SeekFrom};
+use std::io::{Cursor, SeekFrom};
 use std::net::{TcpListener as StdTcpListener, UdpSocket};
 use std::path::PathBuf;
 use std::sync::Arc;
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio::net::TcpListener;
+use tokio_util::io::ReaderStream;
 use uuid::Uuid;
 
 struct AppState {
@@ -104,8 +107,11 @@ async fn download(
     headers: HeaderMap,
 ) -> Result<Response, StatusCode> {
     let file_path = &state.file_path;
-    let file = File::open(file_path).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let file_size = file.metadata().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?.len();
+    let file_read = File::open(file_path).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let file_size = file_read
+        .metadata()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .len();
     let content_type = mime_guess::from_path(file_path).first_or_octet_stream().to_string();
 
     let (start, end) = if let Some(range_header) = headers.get(header::RANGE) {
@@ -143,15 +149,14 @@ async fn download(
         (0, file_size - 1)
     };
 
-    // 读取文件内容
-    let mut file = File::open(file_path).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let len = end - start + 1;
+    let mut file = tokio::fs::File::open(file_path)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     file.seek(SeekFrom::Start(start))
+        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    let length = end - start + 1;
-    let mut buffer = vec![0u8; length as usize];
-    file.read_exact(&mut buffer)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let stream = ReaderStream::new(file.take(len));
 
     if start != 0 || end != file_size - 1 {
         Ok((
@@ -159,10 +164,10 @@ async fn download(
             [
                 (header::ACCEPT_RANGES, "bytes"),
                 (header::CONTENT_RANGE, &format!("bytes {}-{}/{}", start, end, file_size)),
-                (header::CONTENT_LENGTH, &length.to_string()),
+                (header::CONTENT_LENGTH, &len.to_string()),
                 (header::CONTENT_TYPE, &content_type),
             ],
-            buffer,
+            Body::from_stream(stream),
         )
             .into_response())
     } else {
@@ -170,10 +175,10 @@ async fn download(
             StatusCode::OK,
             [
                 (header::ACCEPT_RANGES, "bytes"),
-                (header::CONTENT_LENGTH, &length.to_string()),
+                (header::CONTENT_LENGTH, &len.to_string()),
                 (header::CONTENT_TYPE, &content_type),
             ],
-            buffer,
+            Body::from_stream(stream),
         )
             .into_response())
     }
