@@ -6,10 +6,3 @@ edition = "2024"
 [dependencies]
 rqrr = "0.10"
 image = "0.25"
-
-[profile.release]
-lto = true
-strip = true
-debug = false
-panic = 'abort'
-codegen-units = 1

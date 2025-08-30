@@ -18,10 +18,3 @@ features = ["derive"]
 [dependencies.tokio]
 version = "1.0"
 features = ["full"]
-
-[profile.release]
-lto = true
-strip = true
-debug = false
-panic = 'abort'
-codegen-units = 1

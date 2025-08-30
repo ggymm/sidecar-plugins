@@ -11,9 +11,3 @@ sha2 = "0.10"
 digest = "0.10"
 crossbeam-channel = "0.5"
 
-[profile.release]
-lto = true
-strip = true
-debug = false
-panic = 'abort'
-codegen-units = 1
