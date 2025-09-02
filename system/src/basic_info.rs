@@ -158,15 +158,13 @@ fn get_system_serial_number() -> String {
 
     #[cfg(target_os = "windows")]
     {
-        if let Ok(output) = Command::new("wmic")
-            .args(["csproduct", "get", "identifyingnumber", "/value"])
+        if let Ok(output) = Command::new("powershell")
+            .args(["-Command", "Get-WmiObject -Class Win32_BIOS | Select-Object -ExpandProperty SerialNumber"])
             .output()
         {
-            let output_str = String::from_utf8_lossy(&output.stdout);
-            for line in output_str.lines() {
-                if line.starts_with("IdentifyingNumber=") {
-                    return line.split('=').nth(1).unwrap_or("").trim().to_string();
-                }
+            let serial = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !serial.is_empty() && serial != "Not Specified" {
+                return serial;
             }
         }
     }
