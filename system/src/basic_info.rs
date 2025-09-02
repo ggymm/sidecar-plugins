@@ -159,7 +159,10 @@ fn get_system_serial_number() -> String {
     #[cfg(target_os = "windows")]
     {
         if let Ok(output) = Command::new("powershell")
-            .args(["-Command", "Get-WmiObject -Class Win32_BIOS | Select-Object -ExpandProperty SerialNumber"])
+            .args([
+                "-Command",
+                "Get-WmiObject -Class Win32_BIOS | Select-Object -ExpandProperty SerialNumber",
+            ])
             .output()
         {
             let serial = String::from_utf8_lossy(&output.stdout).trim().to_string();
