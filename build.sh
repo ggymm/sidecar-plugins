@@ -32,6 +32,7 @@ apps=(
   "hash"
   "qrcode"
   "share"
+  "system"
 )
 for app in "${apps[@]}"; do
     echo "build $app"
