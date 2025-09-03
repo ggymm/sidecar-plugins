@@ -2,7 +2,6 @@ mod basic_info;
 mod dynamic_info;
 
 use serde_json::json;
-use std::env;
 
 fn print_basic_info() {
     let output = json!({
@@ -20,20 +19,8 @@ fn print_dynamic_info() {
     println!("{}", serde_json::to_string_pretty(&output).unwrap());
 }
 
-fn print_dynamic_info_with_interval(interval_seconds: u64) {
-    loop {
-        let output = json!({
-            "dynamic":  dynamic_info::collect_dynamic_info(),
-            "timestamp": chrono::Local::now().to_rfc3339(),
-        });
-        println!("{}", serde_json::to_string_pretty(&output).unwrap());
-        println!("---");
-        std::thread::sleep(std::time::Duration::from_secs(interval_seconds));
-    }
-}
-
 fn main() {
-    let args: Vec<String> = env::args().collect();
+    let args: Vec<String> = std::env::args().collect();
 
     if args.len() < 2 {
         println!("Usage: {} <basic|dynamic> [interval_seconds]", args[0]);
@@ -45,7 +32,10 @@ fn main() {
         "dynamic" => {
             if args.len() >= 3 {
                 match args[2].parse::<u64>() {
-                    Ok(interval) => print_dynamic_info_with_interval(interval),
+                    Ok(interval) => loop {
+                        print_dynamic_info();
+                        std::thread::sleep(std::time::Duration::from_secs(interval));
+                    },
                     Err(_) => {
                         eprintln!("Error: Invalid interval seconds. Must be a positive number.");
                         std::process::exit(1);

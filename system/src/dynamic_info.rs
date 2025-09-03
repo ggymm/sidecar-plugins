@@ -1,94 +1,117 @@
 use serde::{Deserialize, Serialize};
-use sysinfo::{Components, ProcessesToUpdate, System};
+use sysinfo::{Disks, System};
 
 #[derive(Serialize, Deserialize)]
 pub struct DynamicInfo {
+    pub usage: UsageInfo,
     pub processes: Vec<ProcessInfo>,
-    pub temperature: Vec<TemperatureInfo>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct UsageInfo {
+    pub cpu: f32,
+    pub disks: Vec<DiskUsage>,
+    pub memory: MemoryUsage,
+    pub load_average: LoadAverage,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct MemoryUsage {
+    pub used: u64,
+    pub total: u64,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct LoadAverage {
+    pub one: f64,
+    pub five: f64,
+    pub fifteen: f64,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct DiskUsage {
+    pub used: u64,
+    pub total: u64,
+    pub read_bytes: u64,
+    pub write_bytes: u64,
+    pub mount_point: String,
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct ProcessInfo {
-    pub name: String,
     pub pid: u32,
-    pub cpu_usage: f32,
-    pub memory_usage: u64,
-    pub user: String,
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct TemperatureInfo {
-    pub component: String,
-    pub temperature: f32,
-    pub critical: Option<f32>,
-    pub max: Option<f32>,
+    pub name: String,
+    pub usage_cpu: f32,
+    pub usage_memory: u64,
 }
 
 pub fn collect_dynamic_info() -> DynamicInfo {
     DynamicInfo {
-        processes: collect_top_processes(),
-        temperature: collect_temperature_info(),
+        usage: collect_usage_info(),
+        processes: collect_processes_info(),
     }
 }
 
-fn collect_top_processes() -> Vec<ProcessInfo> {
-    let mut sys = System::new_all();
-    sys.refresh_all();
+fn collect_usage_info() -> UsageInfo {
+    let sys = System::new_all();
+    let load_avg = System::load_average();
 
-    std::thread::sleep(std::time::Duration::from_millis(200));
-    sys.refresh_processes(ProcessesToUpdate::All, true);
+    // 磁盘使用情况
+    let disks = Disks::new_with_refreshed_list();
+    let disk_usage: Vec<DiskUsage> = disks
+        .iter()
+        .map(|disk| {
+            let usage = disk.usage();
+            let total = disk.total_space();
+            DiskUsage {
+                mount_point: disk.mount_point().display().to_string(),
+                used: total - disk.available_space(),
+                total,
+                read_bytes: usage.read_bytes,
+                write_bytes: usage.written_bytes,
+            }
+        })
+        .collect();
+
+    UsageInfo {
+        cpu: sys.global_cpu_usage(),
+        disks: disk_usage,
+        memory: MemoryUsage {
+            used: sys.used_memory(),
+            total: sys.total_memory(),
+        },
+        load_average: LoadAverage {
+            one: load_avg.one,
+            five: load_avg.five,
+            fifteen: load_avg.fifteen,
+        },
+    }
+}
+
+fn collect_processes_info() -> Vec<ProcessInfo> {
+    let sys = System::new_all();
 
     let mut processes: Vec<_> = sys
         .processes()
         .iter()
         .filter_map(|(pid, process)| {
             if let Some(exe_path) = process.exe() {
-                let path_str = exe_path.to_string_lossy();
+                let app_path = exe_path.to_string_lossy();
 
                 #[cfg(target_os = "macos")]
                 {
-                    if path_str.contains("/Applications/") && path_str.contains(".app/") {
-                        let display_name = if let Some(app_pos) = path_str.find(".app/") {
-                            if let Some(start) = path_str[..app_pos].rfind('/') {
-                                path_str[start + 1..app_pos].to_string()
-                            } else {
-                                process.name().to_string_lossy().to_string()
-                            }
-                        } else {
-                            process.name().to_string_lossy().to_string()
-                        };
+                    if app_path.contains(".app/") {
+                        let app_name = app_path
+                            .split('/')
+                            .find(|part| part.ends_with(".app"))
+                            .unwrap_or(&process.name().to_string_lossy())
+                            .to_string();
 
                         return Some(ProcessInfo {
-                            name: display_name,
                             pid: pid.as_u32(),
-                            cpu_usage: process.cpu_usage(),
-                            memory_usage: process.memory(),
-                            user: process
-                                .user_id()
-                                .map(|uid| uid.to_string())
-                                .unwrap_or_else(|| "Unknown".to_string()),
-                        });
-                    }
-                }
-
-                #[cfg(target_os = "windows")]
-                {
-                    if path_str.contains("\\Program Files\\") || path_str.contains("\\Program Files (x86)\\") {
-                        let display_name = if let Some(exe_name) = exe_path.file_stem() {
-                            exe_name.to_string_lossy().to_string()
-                        } else {
-                            process.name().to_string_lossy().to_string()
-                        };
-
-                        return Some(ProcessInfo {
-                            name: display_name,
-                            pid: pid.as_u32(),
-                            cpu_usage: process.cpu_usage(),
-                            memory_usage: process.memory(),
-                            user: process
-                                .user_id()
-                                .map(|uid| uid.to_string())
-                                .unwrap_or_else(|| "Unknown".to_string()),
+                            name: app_name,
+                            usage_cpu: process.cpu_usage(),
+                            usage_memory: process.memory(),
                         });
                     }
                 }
@@ -98,32 +121,7 @@ fn collect_top_processes() -> Vec<ProcessInfo> {
         })
         .collect();
 
-    processes.sort_by(|a, b| b.memory_usage.cmp(&a.memory_usage));
+    processes.sort_by(|a, b| b.usage_memory.cmp(&a.usage_memory));
     processes.truncate(5);
     processes
-}
-
-fn collect_temperature_info() -> Vec<TemperatureInfo> {
-    let components = Components::new_with_refreshed_list();
-
-    let mut temperatures: Vec<_> = components
-        .iter()
-        .filter_map(|component| {
-            component.temperature().map(|temp| TemperatureInfo {
-                component: component.label().to_string(),
-                temperature: temp,
-                critical: component.critical(),
-                max: component.max(),
-            })
-        })
-        .collect();
-
-    // 按温度降序排序
-    temperatures.sort_by(|a, b| {
-        b.temperature
-            .partial_cmp(&a.temperature)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-
-    temperatures
 }
