@@ -27,6 +27,10 @@ case "$(uname -m)" in
   ;;
 esac
 
+
+cargo clean
+cargo build --release --workspace
+
 apps=(
   "dns"
   "hash"
@@ -35,15 +39,9 @@ apps=(
   "system"
 )
 for app in "${apps[@]}"; do
-    echo "build $app"
-    cd "$app" || exit
-    # cargo clean
-    cargo build --release
-    cd ..
-
     if [ "$OS" = "win" ]; then
-        cp -f "$app/target/release/$app.exe" "${app}-${OS}-${ARCH}.exe"
+        cp -f "target/release/$app.exe" "${app}-${OS}-${ARCH}.exe"
     else
-        cp -f "$app/target/release/$app" "${app}-${OS}-${ARCH}"
+        cp -f "target/release/$app" "${app}-${OS}-${ARCH}"
     fi
 done
